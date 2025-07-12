@@ -152,7 +152,7 @@ def load_soil_dataset():
     features = ["Nitrogen", "Phosphorous", "Potassium", "Temparature", "Humidity", "Moisture", "soil_encoded"]
     X = df[features]
     y = df["Crop Type"]
-    model = RandomForestClassifier()
+    model = RandomForestClassifier(n_estimators=200, max_depth=12, random_state=42)
     model.fit(X, y)
     return model, le, df
 
@@ -161,6 +161,8 @@ try:
     soil_display = [_(s) for s in soil_df["Soil Type"].unique()]
     selected_soil_display = st.selectbox(_("🧪 Select Soil Type for ML"), soil_display)
     selected_soil = soil_df["Soil Type"].unique()[soil_display.index(selected_soil_display)]
+
+    budget = st.number_input(_("💰 Enter Your Budget (INR/tonne)"), min_value=0.0)
 
     if st.button(_("🌱 Predict Best Crops in District")):
         encoded_soil = soil_encoder.transform([selected_soil])[0]
@@ -175,14 +177,25 @@ try:
         labels = soil_model.classes_
         crop_scores = {label: prob for label, prob in zip(labels, proba)}
 
-        recommended = [(crop, crop_scores[crop]) for crop in district_crops if crop in crop_scores]
+        price_df = soil_df[["Crop Type", "Production (tonnes)"]].dropna()
+        price_df["Clean Price"] = price_df["Production (tonnes)"].replace({
+            r',': '', r'[^0-9.]': '', r'-+': ''
+        }, regex=True).astype(str)
+        price_df["Clean Price"] = pd.to_numeric(price_df["Clean Price"], errors='coerce')
+
+        price_map = price_df.dropna().drop_duplicates("Crop Type").set_index("Crop Type")["Clean Price"].to_dict()
+
+        recommended = [(crop, crop_scores[crop], price_map[crop])
+                       for crop in district_crops
+                       if crop in crop_scores and crop in price_map and price_map[crop] <= budget]
+
         recommended = sorted(recommended, key=lambda x: x[1], reverse=True)[:5]
 
         if recommended:
-            st.success(_("✅ Top Recommended Crops Grown in Your District:"))
-            for crop, score in recommended:
-                 st.write(f"🌿 *{_(crop)}*")
+            st.success(_("✅ Top Recommended Crops Within Your Budget:"))
+            for crop, score, price in recommended:
+                st.write(f"🌿 {(crop)} — ₹{price:.0f}/tonne )
         else:
-            st.warning(_("❌ No matching crops from prediction found in this district."))
+            st.warning(_("❌ No crops found within your budget."))
 except FileNotFoundError:
     st.warning(_("⚠ Please upload data_core.csv."))
