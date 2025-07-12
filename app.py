@@ -1,95 +1,188 @@
-import streamlit as st 
+import streamlit as st
 import pandas as pd
 import requests
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import LabelEncoder
+from deep_translator import GoogleTranslator
 
-st.set_page_config(page_title="AgriGuru Lite", layout="centered")
+# ---------------- LANGUAGE TRANSLATION SETUP ----------------
+languages = {
+    "English": "en",
+    "Hindi": "hi",
+    "Bengali": "bn",
+    "Marathi": "mr",
+    "Tamil": "ta"
+}
 
-st.title("🌾 AgriGuru Lite – Smart Farming Assistant")
+st.set_page_config(page_title="AgriGuru Lite", layout="wide")
+st.markdown("""
+    <style>
+    .stButton button { width: 100%; border-radius: 10px; font-weight: bold; }
+    .stSelectbox > div { border-radius: 10px; }
+    .block-container { padding-top: 2rem; }
+    .css-18e3th9 { background: linear-gradient(to right, #dce35b, #45b649); padding: 1rem; border-radius: 12px; }
+    .stMarkdown h1, .stMarkdown h2, .stMarkdown h3 { color: #2f4f4f; }
+    </style>
+""", unsafe_allow_html=True)
+
+# Sidebar: Language selection
+st.sidebar.image("https://cdn-icons-png.flaticon.com/512/606/606807.png", width=80)
+st.sidebar.title("🌐 Language Settings")
+selected_lang = st.sidebar.selectbox("Select Language", list(languages.keys()))
+target_lang = languages[selected_lang]
+
+# Translation with caching
+translator_cache = {}
+def _(text):
+    if target_lang == "en":
+        return text
+    if (text, target_lang) in translator_cache:
+        return translator_cache[(text, target_lang)]
+    try:
+        translated = GoogleTranslator(source='en', target=target_lang).translate(text)
+        translator_cache[(text, target_lang)] = translated
+        return translated
+    except:
+        return text
+
+# ---------------- HEADER ----------------
+st.markdown(f"<h1 style='text-align: center; color: #006400;'>{_('🌾 AgriGuru Lite – Smart Farming Assistant')}</h1>", unsafe_allow_html=True)
+st.markdown("<hr style='border: 2px solid #228B22;'>", unsafe_allow_html=True)
+
+# ---------------- LOAD PRODUCTION DATA ----------------
+@st.cache_data
+def load_production_data():
+    return pd.read_csv("crop_production.csv")
+
+try:
+    prod_df = load_production_data()
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        states = sorted(prod_df["State_Name"].dropna().unique())
+        state_display = [_(s) for s in states]
+        selected_state_display = st.selectbox(_("🌍 Select State"), state_display)
+        selected_state = states[state_display.index(selected_state_display)]
+
+    with col2:
+        districts = sorted(prod_df[prod_df["State_Name"] == selected_state]["District_Name"].dropna().unique())
+        district_display = [_(d) for d in districts]
+        selected_district_display = st.selectbox(_("🏞 Select District"), district_display)
+        selected_district = districts[district_display.index(selected_district_display)]
+
+    with col3:
+        seasons = sorted(prod_df["Season"].dropna().unique())
+        season_display = [_(s) for s in seasons]
+        selected_season_display = st.selectbox(_("🗓 Select Season"), season_display)
+        selected_season = seasons[season_display.index(selected_season_display)]
+
+    st.markdown(f"<h4 style='color:#2E8B57;'>📍 {('Selected Region')}: <b>{selected_district}, {selected_state}</b> | {('Season')}: <b>{selected_season}</b></h4>", unsafe_allow_html=True)
+except FileNotFoundError:
+    st.warning(_("⚠ Please upload crop_production.csv."))
 
 # ---------------- WEATHER FORECAST ----------------
-st.subheader("🌦️ 5-Day Weather Forecast")
-api_key = "0a16832edf4445ce698396f2fa890ddd"  # Replace with your OpenWeatherMap API Key
-
-location = st.text_input("Enter your City/District (for weather)")
+st.markdown("### ⛅ " + _("Weather Forecast"))
+weather_api_key = "0a16832edf4445ce698396f2fa890ddd"
 
 def get_weather(city):
-    url = f"http://api.openweathermap.org/data/2.5/forecast?q={city}&appid={api_key}&units=metric"
+    url = f"http://api.openweathermap.org/data/2.5/forecast?q={city}&appid={weather_api_key}&units=metric"
     res = requests.get(url)
     if res.status_code == 200:
         return res.json()['list'][:5]
     return None
 
-if location:
-    forecast = get_weather(location)
+if 'selected_district' in locals():
+    try:
+        district_en = GoogleTranslator(source=target_lang, target='en').translate(selected_district)
+    except:
+        district_en = selected_district
+
+    forecast = get_weather(district_en)
     if forecast:
         for day in forecast:
-            st.write(f"{day['dt_txt']} | 🌡️ {day['main']['temp']}°C | {day['weather'][0]['description']}")
+            st.info(f"📅 {day['dt_txt']} | 🌡 {day['main']['temp']}°C | ☁ {_(day['weather'][0]['description'])}")
     else:
-        st.warning("Couldn't fetch weather. Please check the city name.")
+        st.warning(_("⚠ Weather unavailable. Try a nearby city."))
 
-# ---------------- RULE-BASED CROP RECOMMENDATION ----------------
-st.subheader("🧠 Rule-Based Crop Recommendation")
+st.markdown("<hr>", unsafe_allow_html=True)
 
-season = st.selectbox("Select the Crop Season", ["Kharif", "Rabi", "Zaid"])
-soil = st.selectbox("Select Soil Type", ["Alluvial", "Black", "Red", "Laterite", "Sandy", "Clayey"])
+# ---------------- SUITABLE CROPS BY SOIL TYPE ----------------
+st.markdown(f"### 🧱 { _('Explore Suitable Crops by Soil Type') }")
 
-def recommend_crops(season, soil):
-    if season == "Kharif" and soil == "Alluvial":
-        return ["Paddy", "Maize", "Jute"]
-    elif season == "Rabi" and soil == "Black":
-        return ["Wheat", "Barley", "Gram"]
-    elif season == "Zaid":
-        return ["Watermelon", "Cucumber", "Bitter Gourd"]
-    else:
-        return ["Millets", "Pulses", "Sunflower"]
-
-if season and soil:
-    rule_based = recommend_crops(season, soil)
-    st.success("Recommended Crops: " + ", ".join(rule_based))
-
-# ---------------- ML-BASED CROP RECOMMENDATION ----------------
-st.subheader("🤖 ML-Based Crop Recommendation (via CSV + Random Forest)")
-
-@st.cache_data
-def load_crop_data():
-    return pd.read_csv("Crop_recommendation.csv")
-
-df = load_crop_data()
-
-X = df.drop("label", axis=1)
-y = df["label"]
-
-model = RandomForestClassifier()
-model.fit(X, y)
-
-# Crop-to-Season Mapping
-crop_seasons = {
-    "rice": "Kharif", "maize": "Kharif", "jute": "Kharif", "cotton": "Kharif",
-    "kidneybeans": "Kharif", "pigeonpeas": "Kharif", "blackgram": "Kharif", 
-    "mothbeans": "Kharif", "mungbean": "Kharif",
-
-    "wheat": "Rabi", "gram": "Rabi", "lentil": "Rabi", "chickpea": "Rabi",
-    "grapes": "Rabi", "apple": "Rabi", "orange": "Rabi", "pomegranate": "Rabi",
-
-    "watermelon": "Zaid", "muskmelon": "Zaid", "cucumber": "Zaid",
-
-    "banana": "All Season", "mango": "All Season", "papaya": "All Season",
-    "coconut": "All Season", "coffee": "All Season"
+soil_crop_map = {
+    "Alluvial": ["Rice", "Sugarcane", "Wheat", "Jute"],
+    "Black": ["Cotton", "Soybean", "Sorghum"],
+    "Red": ["Millets", "Groundnut", "Potato"],
+    "Laterite": ["Cashew", "Tea", "Tapioca"],
+    "Sandy": ["Melons", "Pulses", "Groundnut"],
+    "Clayey": ["Rice", "Wheat", "Lentil"],
+    "Loamy": ["Maize", "Barley", "Sugarcane"]
 }
 
-st.markdown("**Enter Soil and Climate Data for ML Prediction**")
-n = st.number_input("Nitrogen (N)", min_value=0.0)
-p = st.number_input("Phosphorus (P)", min_value=0.0)
-k = st.number_input("Potassium (K)", min_value=0.0)
-temp = st.number_input("Temperature (°C)", min_value=0.0)
-humidity = st.number_input("Humidity (%)", min_value=0.0)
-ph = st.number_input("Soil pH", min_value=0.0)
-rainfall = st.number_input("Rainfall (mm)", min_value=0.0)
+soil_display_map = {_(s): s for s in soil_crop_map}
+soil_cols = st.columns(3)
+for i, translated_soil in enumerate(soil_display_map):
+    with soil_cols[i % 3]:
+        if st.button(translated_soil, key=f"soil_{translated_soil}"):
+            crops = [_(c) for c in soil_crop_map[soil_display_map[translated_soil]]]
+            st.success("🌾 " + _(f"Suitable Crops: {', '.join(crops)}"))
 
-if st.button("Predict Best Crop"):
-    input_data = [[n, p, k, temp, humidity, ph, rainfall]]
-    prediction = model.predict(input_data)
-    predicted_crop = prediction[0]
-    season = crop_seasons.get(predicted_crop, "Unknown")
-    st.success(f"🌱 Predicted Crop: **{predicted_crop}** ({season} season)")
+st.markdown("<hr>", unsafe_allow_html=True)
+
+# ---------------- USER INPUT FOR ML ----------------
+st.markdown(f"### 📊 { _('Enter Soil and Climate Data (for ML Prediction)') }")
+col1, col2, col3 = st.columns(3)
+with col1:
+    n = st.number_input(_("Nitrogen"), min_value=0.0, key="n")
+    p = st.number_input(_("Phosphorous"), min_value=0.0, key="p")
+with col2:
+    k = st.number_input(_("Potassium"), min_value=0.0, key="k")
+    temp = st.number_input(_("Temparature (°C)"), min_value=0.0, key="temp")
+with col3:
+    humidity = st.number_input(_("Humidity (%)"), min_value=0.0, key="humidity")
+    moisture = st.number_input(_("Moisture (%)"), min_value=0.0, key="moisture")
+
+# ---------------- ML MODEL ----------------
+st.markdown(f"### 🌿 { _('ML-Powered Crop Recommendation (Filtered by District)') }")
+
+@st.cache_data
+def load_soil_dataset():
+    df = pd.read_csv("data_core.csv")
+    le = LabelEncoder()
+    df["soil_encoded"] = le.fit_transform(df["Soil Type"])
+    features = ["Nitrogen", "Phosphorous", "Potassium", "Temparature", "Humidity", "Moisture", "soil_encoded"]
+    X = df[features]
+    y = df["Crop Type"]
+    model = RandomForestClassifier()
+    model.fit(X, y)
+    return model, le, df
+
+try:
+    soil_model, soil_encoder, soil_df = load_soil_dataset()
+    soil_display = [_(s) for s in soil_df["Soil Type"].unique()]
+    selected_soil_display = st.selectbox(_("🧪 Select Soil Type for ML"), soil_display)
+    selected_soil = soil_df["Soil Type"].unique()[soil_display.index(selected_soil_display)]
+
+    if st.button(_("🌱 Predict Best Crops in District")):
+        encoded_soil = soil_encoder.transform([selected_soil])[0]
+        input_data = [[n, p, k, temp, humidity, moisture, encoded_soil]]
+
+        district_crops = prod_df[
+            (prod_df["District_Name"] == selected_district) &
+            (prod_df["State_Name"] == selected_state)
+        ]["Crop"].dropna().unique()
+
+        proba = soil_model.predict_proba(input_data)[0]
+        labels = soil_model.classes_
+        crop_scores = {label: prob for label, prob in zip(labels, proba)}
+
+        recommended = [(crop, crop_scores[crop]) for crop in district_crops if crop in crop_scores]
+        recommended = sorted(recommended, key=lambda x: x[1], reverse=True)[:5]
+
+        if recommended:
+            st.success(_("✅ Top Recommended Crops Grown in Your District:"))
+            for crop, score in recommended:
+                 st.write(f"🌿 *{_(crop)}* — {_('Confidence')}: {score:.2f}")
+        else:
+            st.warning(_("❌ No matching crops from prediction found in this district."))
+except FileNotFoundError:
+    st.warning(_("⚠ Please upload data_core.csv."))
