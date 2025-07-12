@@ -194,7 +194,7 @@ try:
         if recommended:
             st.success(_("✅ Top Recommended Crops Within Your Budget:"))
             for crop, score, price in recommended:
-                st.write(f"🌿 {(crop)} — ₹{price:.0f}/tonne )
+                st.write(f"🌿 {(crop)} — ₹{price:.0f}/tonne")
         else:
             st.warning(_("❌ No crops found within your budget."))
 except FileNotFoundError:
